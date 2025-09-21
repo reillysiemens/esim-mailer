@@ -7,13 +7,19 @@ use std::thread;
 
 #[cfg(test)]
 use crate::email::EmailError;
-use crate::email::{self, EmailTemplate, Result as EmailResult};
+use crate::email::{self, EmailTemplate};
 use crate::oauth::OAuthClient;
 use crate::{Args, send_email};
 
 // Trait for email operations to allow mocking in tests
 pub trait EmailOperations: Send + Sync {
-    fn send_email(&self, args: &Args, token: String, path: &Path, count: usize) -> EmailResult<()>;
+    fn send_email(
+        &self,
+        args: &Args,
+        token: String,
+        path: &Path,
+        count: usize,
+    ) -> Result<(), email::EmailError>;
     fn get_token(
         &self,
         provider: &email::Provider,
@@ -33,7 +39,13 @@ impl DefaultEmailOperations {
 }
 
 impl EmailOperations for DefaultEmailOperations {
-    fn send_email(&self, args: &Args, token: String, path: &Path, count: usize) -> EmailResult<()> {
+    fn send_email(
+        &self,
+        args: &Args,
+        token: String,
+        path: &Path,
+        count: usize,
+    ) -> Result<(), email::EmailError> {
         send_email(args, token, path, count)
     }
 
@@ -360,7 +372,7 @@ mod tests {
             _token: String,
             _path: &Path,
             _count: usize,
-        ) -> EmailResult<()> {
+        ) -> Result<(), email::EmailError> {
             if self.should_fail {
                 return Err(EmailError::MessageError("Mock error".to_string()));
             }

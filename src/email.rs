@@ -26,9 +26,6 @@ pub enum EmailError {
     IoError(#[from] std::io::Error),
 }
 
-/// Result type for email operations
-pub type Result<T> = std::result::Result<T, EmailError>;
-
 /// An error which can be returned when parsing a provider from an email address.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 #[error("No supported email provider for '{0}'")]
@@ -99,7 +96,12 @@ impl EmailTemplate {
     }
 }
 
-pub fn send_email(args: &Args, token: String, image_path: &Path, count: usize) -> Result<()> {
+pub fn send_email(
+    args: &Args,
+    token: String,
+    image_path: &Path,
+    count: usize,
+) -> Result<(), EmailError> {
     let email_from = &args.email_from;
     let email_to = &args.email_to;
 
@@ -183,7 +185,7 @@ fn configure_mailer(
     provider: &Provider,
     email_address: &str,
     token: String,
-) -> Result<SmtpTransport> {
+) -> Result<SmtpTransport, EmailError> {
     match provider {
         Provider::Gmail => Ok(SmtpTransport::relay("smtp.gmail.com")
             .map_err(|e| EmailError::SmtpError(format!("Failed to connect to Gmail SMTP: {}", e)))?
@@ -295,7 +297,7 @@ mod tests {
     }
 
     #[test]
-    fn test_send_email() -> Result<()> {
+    fn test_send_email() -> Result<(), EmailError> {
         // Create a temporary test image
         let temp_dir = std::env::temp_dir();
         let image_path = temp_dir.join("test_image.png");
