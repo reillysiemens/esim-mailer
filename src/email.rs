@@ -132,12 +132,13 @@ pub fn send_email(
             .subject(subject);
 
     // Add BCC if provided and not empty
-    if let Some(bcc) = &args.bcc {
-        if !bcc.is_empty() {
-            email_builder = email_builder.bcc(bcc.parse().map_err(|e| {
+    if let Some(bcc) = &args.bcc
+        && !bcc.is_empty()
+    {
+        email_builder =
+            email_builder.bcc(bcc.parse().map_err(|e| {
                 EmailError::MessageError(format!("Invalid BCC email address: {}", e))
             })?);
-        }
     }
 
     // Build the email with multipart/related content

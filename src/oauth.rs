@@ -8,18 +8,12 @@ use oauth2::{
     AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointNotSet, EndpointSet,
     PkceCodeChallenge, RedirectUrl, RefreshToken, Scope, TokenResponse, TokenUrl,
 };
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::TcpListener;
 use url::Url;
 use webbrowser;
-
-#[derive(Serialize, Deserialize)]
-struct CachedToken {
-    refresh_token: String,
-}
 
 // Trait for token storage
 pub trait TokenStorage: Send + Sync {
@@ -53,7 +47,7 @@ pub struct DefaultBrowserOpener;
 
 impl BrowserOpener for DefaultBrowserOpener {
     fn open_url(&self, url: &str) -> io::Result<()> {
-        webbrowser::open(url).map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+        webbrowser::open(url).map_err(io::Error::other)
     }
 }
 
@@ -97,8 +91,7 @@ impl OAuthCodeReceiver for LocalServerCodeReceiver {
             }
         }
 
-        Err(io::Error::new(
-            io::ErrorKind::Other,
+        Err(io::Error::other(
             "Failed to get authorization code",
         ))
     }
@@ -142,15 +135,14 @@ impl OAuthClient {
         let email_hash = format!("{:x}", Sha256::digest(email.as_bytes()));
         let cache_key = format!("{}_{}", email_provider, email_hash);
 
-        if let Some(refresh_token) = self.token_storage.get_token(&cache_key) {
-            if let Ok((access_token, new_refresh_token)) =
+        if let Some(refresh_token) = self.token_storage.get_token(&cache_key)
+            && let Ok((access_token, new_refresh_token)) =
                 self.refresh_oauth_token(email_provider, &refresh_token)
-            {
-                if new_refresh_token != refresh_token {
-                    self.token_storage.set_token(&cache_key, new_refresh_token);
-                }
-                return Ok(access_token);
+        {
+            if new_refresh_token != refresh_token {
+                self.token_storage.set_token(&cache_key, new_refresh_token);
             }
+            return Ok(access_token);
         }
 
         let (access_token, refresh_token) = self.perform_oauth(email_provider)?;
@@ -178,13 +170,13 @@ impl OAuthClient {
             .exchange_code(AuthorizationCode::new(code))
             .set_pkce_verifier(pkce_verifier)
             .request(&BlockingHttpClient::new())
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
         let access_token = token.access_token().secret().clone();
         let refresh_token = token
             .refresh_token()
             .map(|rt| rt.secret().clone())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "No refresh token provided"))?;
+            .ok_or_else(|| io::Error::other("No refresh token provided"))?;
 
         Ok((access_token, refresh_token))
     }
@@ -199,7 +191,7 @@ impl OAuthClient {
         let token_result = client
             .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
             .request(&BlockingHttpClient::new())
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
         let access_token = token_result.access_token().secret().clone();
         let refresh_token = token_result
@@ -327,7 +319,7 @@ mod tests {
     impl OAuthCodeReceiver for MockCodeReceiver {
         fn receive_code(&self) -> io::Result<String> {
             if self.should_fail {
-                Err(io::Error::new(io::ErrorKind::Other, "Failed to get code"))
+                Err(io::Error::other("Failed to get code"))
             } else {
                 Ok(self.code.clone())
             }
@@ -384,8 +376,7 @@ mod tests {
         struct FailingBrowserOpener;
         impl BrowserOpener for FailingBrowserOpener {
             fn open_url(&self, _url: &str) -> io::Result<()> {
-                Err(io::Error::new(
-                    io::ErrorKind::Other,
+                Err(io::Error::other(
                     "Failed to open browser",
                 ))
             }

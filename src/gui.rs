@@ -289,13 +289,12 @@ impl eframe::App for EsimMailerApp {
 
                 ui.add_space(10.0);
 
-                if ui.button("Select QR codes").clicked() {
-                    if let Some(paths) = FileDialog::new()
+                if ui.button("Select QR codes").clicked()
+                    && let Some(paths) = FileDialog::new()
                         .add_filter("Image Files", &["png", "jpg", "jpeg", "gif"])
                         .pick_files()
-                    {
-                        self.state.image_paths = paths;
-                    }
+                {
+                    self.state.image_paths = paths;
                 }
 
                 ui.label(format!(
