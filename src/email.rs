@@ -3,58 +3,27 @@ use lettre::message::header;
 use lettre::transport::smtp::authentication::{Credentials, Mechanism};
 use lettre::{Message, SmtpTransport, Transport};
 use std::error::Error;
-use std::fmt::{self, Display};
+use std::fmt::Display;
 use std::fs;
 use std::path::Path;
 use std::str::FromStr;
 use uuid;
 
 /// Errors that can occur during email operations.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum EmailError {
     /// An unsupported email provider was specified
-    UnsupportedProvider(ParseProviderError),
+    #[error("Unsupported email provider: {0}")]
+    UnsupportedProvider(#[from] ParseProviderError),
     /// Failed to parse or build email content
+    #[error("Email message error: {0}")]
     MessageError(String),
     /// Network/SMTP connection failed
+    #[error("SMTP error: {0}")]
     SmtpError(String),
     /// File system operations failed
-    IoError(std::io::Error),
-}
-
-impl Display for EmailError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            EmailError::UnsupportedProvider(err) => {
-                write!(f, "Unsupported email provider: {}", err)
-            }
-            EmailError::MessageError(msg) => write!(f, "Email message error: {}", msg),
-            EmailError::SmtpError(msg) => write!(f, "SMTP error: {}", msg),
-            EmailError::IoError(err) => write!(f, "IO error: {}", err),
-        }
-    }
-}
-
-impl Error for EmailError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            EmailError::UnsupportedProvider(err) => Some(err),
-            EmailError::IoError(err) => Some(err),
-            _ => None,
-        }
-    }
-}
-
-impl From<std::io::Error> for EmailError {
-    fn from(err: std::io::Error) -> Self {
-        EmailError::IoError(err)
-    }
-}
-
-impl From<ParseProviderError> for EmailError {
-    fn from(err: ParseProviderError) -> Self {
-        EmailError::UnsupportedProvider(err)
-    }
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
 }
 
 /// Result type for email operations
