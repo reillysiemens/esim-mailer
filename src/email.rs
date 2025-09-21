@@ -41,7 +41,7 @@ pub enum Provider {
 impl FromStr for Provider {
     type Err = ParseProviderError;
 
-    fn from_str(email: &str) -> std::result::Result<Self, Self::Err> {
+    fn from_str(email: &str) -> Result<Self, Self::Err> {
         match email.rsplit_once('@') {
             Some((_, "gmail.com")) => Ok(Self::Gmail),
             Some((_, "outlook.com" | "hotmail.com")) => Ok(Self::Outlook),
