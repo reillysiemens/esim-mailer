@@ -7,22 +7,16 @@ use std::thread;
 
 use crate::email::{self, EmailTemplate};
 use crate::oauth::OAuthClient;
-use crate::{Args, send_email};
+use crate::{Args, Result, send_email};
 
 // Trait for email operations to allow mocking in tests
 pub trait EmailOperations: Send + Sync {
-    fn send_email(
-        &self,
-        args: &Args,
-        token: String,
-        path: &Path,
-        count: usize,
-    ) -> std::io::Result<()>;
+    fn send_email(&self, args: &Args, token: String, path: &Path, count: usize) -> Result<()>;
     fn get_token(
         &self,
         provider: &email::Provider,
         email: &str,
-    ) -> Result<String, Box<dyn std::error::Error>>;
+    ) -> std::result::Result<String, Box<dyn std::error::Error>>;
 }
 
 // Default implementation that uses real email functionality
@@ -37,13 +31,7 @@ impl DefaultEmailOperations {
 }
 
 impl EmailOperations for DefaultEmailOperations {
-    fn send_email(
-        &self,
-        args: &Args,
-        token: String,
-        path: &Path,
-        count: usize,
-    ) -> std::io::Result<()> {
+    fn send_email(&self, args: &Args, token: String, path: &Path, count: usize) -> Result<()> {
         send_email(args, token, path, count)
     }
 
@@ -51,7 +39,7 @@ impl EmailOperations for DefaultEmailOperations {
         &self,
         provider: &email::Provider,
         email: &str,
-    ) -> Result<String, Box<dyn std::error::Error>> {
+    ) -> std::result::Result<String, Box<dyn std::error::Error>> {
         let mut client = self.oauth_client.lock().unwrap();
         Ok(client.get_or_refresh_token(provider, email)?)
     }
@@ -370,9 +358,11 @@ mod tests {
             _token: String,
             _path: &Path,
             _count: usize,
-        ) -> std::io::Result<()> {
+        ) -> Result<()> {
             if self.should_fail {
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, "Mock error"));
+                return Err(crate::error::EsimMailerError::EmailError(
+                    "Mock error".to_string(),
+                ));
             }
             let mut count = self.send_count.lock().unwrap();
             *count += 1;
@@ -383,7 +373,7 @@ mod tests {
             &self,
             _provider: &email::Provider,
             _email: &str,
-        ) -> Result<String, Box<dyn std::error::Error>> {
+        ) -> std::result::Result<String, Box<dyn std::error::Error>> {
             if self.should_fail {
                 return Err("Mock token error".into());
             }

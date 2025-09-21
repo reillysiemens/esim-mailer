@@ -261,9 +261,12 @@ fn create_oauth_client(
     let client_secret = config.encrypted_client_secret.map(decrypt_client_secret);
 
     let mut client = BasicClient::new(ClientId::new(config.client_id.to_string()))
-        .set_auth_uri(AuthUrl::new(config.auth_url.to_string()).unwrap())
-        .set_token_uri(TokenUrl::new(config.token_url.to_string()).unwrap())
-        .set_redirect_uri(RedirectUrl::new(config.redirect_uri.to_string()).unwrap());
+        .set_auth_uri(AuthUrl::new(config.auth_url.to_string())
+            .expect("Hard-coded auth URL should be valid"))
+        .set_token_uri(TokenUrl::new(config.token_url.to_string())
+            .expect("Hard-coded token URL should be valid"))
+        .set_redirect_uri(RedirectUrl::new(config.redirect_uri.to_string())
+            .expect("Hard-coded redirect URL should be valid"));
 
     if let Some(secret) = client_secret.map(ClientSecret::new) {
         client = client.set_client_secret(secret);

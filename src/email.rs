@@ -1,11 +1,11 @@
 use crate::Args;
+use crate::error::{EsimMailerError, Result};
 use lettre::message::header;
 use lettre::transport::smtp::authentication::{Credentials, Mechanism};
 use lettre::{Message, SmtpTransport, Transport};
 use std::error::Error;
 use std::fmt::Display;
 use std::fs;
-use std::io;
 use std::path::Path;
 use std::str::FromStr;
 use uuid;
@@ -25,7 +25,7 @@ pub enum Provider {
 impl FromStr for Provider {
     type Err = ParseProviderError;
 
-    fn from_str(email: &str) -> Result<Self, Self::Err> {
+    fn from_str(email: &str) -> std::result::Result<Self, Self::Err> {
         match email.rsplit_once('@') {
             Some((_, "gmail.com")) => Ok(Self::Gmail),
             Some((_, "outlook.com" | "hotmail.com")) => Ok(Self::Outlook),
@@ -80,7 +80,7 @@ impl EmailTemplate {
     }
 }
 
-pub fn send_email(args: &Args, token: String, image_path: &Path, count: usize) -> io::Result<()> {
+pub fn send_email(args: &Args, token: String, image_path: &Path, count: usize) -> Result<()> {
     let email_from = &args.email_from;
     let email_to = &args.email_to;
 
@@ -101,23 +101,20 @@ pub fn send_email(args: &Args, token: String, image_path: &Path, count: usize) -
 
     // Create multipart email with HTML body and image attachment
     let mut email_builder = Message::builder()
-        .from(
-            email_from
-                .parse()
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?,
-        )
+        .from(email_from.parse().map_err(|e| {
+            EsimMailerError::EmailError(format!("Invalid from email address: {}", e))
+        })?)
         .to(email_to
             .parse()
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?)
+            .map_err(|e| EsimMailerError::EmailError(format!("Invalid to email address: {}", e)))?)
         .subject(subject);
 
     // Add BCC if provided and not empty
     if let Some(bcc) = &args.bcc {
         if !bcc.is_empty() {
-            email_builder = email_builder.bcc(
-                bcc.parse()
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?,
-            );
+            email_builder = email_builder.bcc(bcc.parse().map_err(|e| {
+                EsimMailerError::EmailError(format!("Invalid BCC email address: {}", e))
+            })?);
         }
     }
 
@@ -130,19 +127,19 @@ pub fn send_email(args: &Args, token: String, image_path: &Path, count: usize) -
                         .header(header::ContentType::TEXT_HTML)
                         .body(body),
                 )
-                .singlepart(
-                    lettre::message::Attachment::new_inline(content_id)
-                        .body(image_data, header::ContentType::parse("image/png").unwrap()),
-                ),
+                .singlepart(lettre::message::Attachment::new_inline(content_id).body(
+                    image_data,
+                    header::ContentType::parse("image/png").map_err(|e| {
+                        EsimMailerError::EmailError(format!("Invalid content type: {}", e))
+                    })?,
+                )),
         )
-        .unwrap();
+        .map_err(|e| EsimMailerError::EmailError(format!("Failed to build email: {}", e)))?;
 
     // Configure SMTP client with TLS
     let provider: Provider = email_from
         .parse()
-        // TODO: Ideally this wouldn't get mapped to an io::Error, but right now
-        // the function signature requires it.
-        .map_err(|_| io::Error::other("Unsupported email provider"))?;
+        .map_err(|e: ParseProviderError| EsimMailerError::UnsupportedProvider(e.to_string()))?;
     let mailer = configure_mailer(&provider, email_from, token)?;
 
     // Send the email
@@ -156,10 +153,10 @@ pub fn send_email(args: &Args, token: String, image_path: &Path, count: usize) -
             if let Some(source) = e.source() {
                 eprintln!("Error source: {:?}", source);
             }
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("Could not send email: {}", e),
-            ))
+            Err(EsimMailerError::EmailError(format!(
+                "Could not send email: {}",
+                e
+            )))
         }
     }
 }
@@ -168,20 +165,29 @@ fn configure_mailer(
     provider: &Provider,
     email_address: &str,
     token: String,
-) -> io::Result<SmtpTransport> {
+) -> Result<SmtpTransport> {
     match provider {
         Provider::Gmail => Ok(SmtpTransport::relay("smtp.gmail.com")
-            .unwrap()
+            .map_err(|e| {
+                EsimMailerError::NetworkError(format!("Failed to connect to Gmail SMTP: {}", e))
+            })?
             .credentials(Credentials::new(email_address.to_string(), token))
             .authentication(vec![Mechanism::Xoauth2])
             .port(587)
             .tls(lettre::transport::smtp::client::Tls::Required(
                 lettre::transport::smtp::client::TlsParameters::new("smtp.gmail.com".to_string())
-                    .unwrap(),
+                    .map_err(|e| {
+                    EsimMailerError::NetworkError(format!(
+                        "Failed to configure TLS for Gmail: {}",
+                        e
+                    ))
+                })?,
             ))
             .build()),
         Provider::Outlook => Ok(SmtpTransport::relay("smtp-mail.outlook.com")
-            .unwrap()
+            .map_err(|e| {
+                EsimMailerError::NetworkError(format!("Failed to connect to Outlook SMTP: {}", e))
+            })?
             .credentials(Credentials::new(email_address.to_string(), token))
             .authentication(vec![Mechanism::Xoauth2])
             .port(587)
@@ -189,7 +195,12 @@ fn configure_mailer(
                 lettre::transport::smtp::client::TlsParameters::new(
                     "smtp-mail.outlook.com".to_string(),
                 )
-                .unwrap(),
+                .map_err(|e| {
+                    EsimMailerError::NetworkError(format!(
+                        "Failed to configure TLS for Outlook: {}",
+                        e
+                    ))
+                })?,
             ))
             .build()),
     }
@@ -274,7 +285,7 @@ mod tests {
     }
 
     #[test]
-    fn test_send_email() -> io::Result<()> {
+    fn test_send_email() -> Result<()> {
         // Create a temporary test image
         let temp_dir = std::env::temp_dir();
         let image_path = temp_dir.join("test_image.png");
@@ -325,12 +336,12 @@ mod tests {
         // Create a temporary test image first
         let temp_dir = std::env::temp_dir();
         let image_path = temp_dir.join("test_image2.png");
-        fs::write(&image_path, b"fake image data").unwrap();
+        fs::write(&image_path, b"fake image data").expect("Failed to write test file");
 
         let result = send_email(&args, "fake_token".to_string(), &image_path, 1);
 
         // Clean up
-        fs::remove_file(image_path).unwrap();
+        fs::remove_file(image_path).expect("Failed to clean up test file");
 
         assert!(result.is_err());
         assert!(
