@@ -1,14 +1,64 @@
 use crate::Args;
-use crate::error::{EsimMailerError, Result};
 use lettre::message::header;
 use lettre::transport::smtp::authentication::{Credentials, Mechanism};
 use lettre::{Message, SmtpTransport, Transport};
 use std::error::Error;
-use std::fmt::Display;
+use std::fmt::{self, Display};
 use std::fs;
 use std::path::Path;
 use std::str::FromStr;
 use uuid;
+
+/// Errors that can occur during email operations.
+#[derive(Debug)]
+pub enum EmailError {
+    /// An unsupported email provider was specified
+    UnsupportedProvider(ParseProviderError),
+    /// Failed to parse or build email content
+    MessageError(String),
+    /// Network/SMTP connection failed
+    SmtpError(String),
+    /// File system operations failed
+    IoError(std::io::Error),
+}
+
+impl Display for EmailError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EmailError::UnsupportedProvider(err) => {
+                write!(f, "Unsupported email provider: {}", err)
+            }
+            EmailError::MessageError(msg) => write!(f, "Email message error: {}", msg),
+            EmailError::SmtpError(msg) => write!(f, "SMTP error: {}", msg),
+            EmailError::IoError(err) => write!(f, "IO error: {}", err),
+        }
+    }
+}
+
+impl Error for EmailError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            EmailError::UnsupportedProvider(err) => Some(err),
+            EmailError::IoError(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for EmailError {
+    fn from(err: std::io::Error) -> Self {
+        EmailError::IoError(err)
+    }
+}
+
+impl From<ParseProviderError> for EmailError {
+    fn from(err: ParseProviderError) -> Self {
+        EmailError::UnsupportedProvider(err)
+    }
+}
+
+/// Result type for email operations
+pub type Result<T> = std::result::Result<T, EmailError>;
 
 /// An error which can be returned when parsing a provider from an email address.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -100,20 +150,21 @@ pub fn send_email(args: &Args, token: String, image_path: &Path, count: usize) -
     let body = body_content.replace("{{QR_CID}}", &content_id);
 
     // Create multipart email with HTML body and image attachment
-    let mut email_builder = Message::builder()
-        .from(email_from.parse().map_err(|e| {
-            EsimMailerError::EmailError(format!("Invalid from email address: {}", e))
-        })?)
-        .to(email_to
-            .parse()
-            .map_err(|e| EsimMailerError::EmailError(format!("Invalid to email address: {}", e)))?)
-        .subject(subject);
+    let mut email_builder =
+        Message::builder()
+            .from(email_from.parse().map_err(|e| {
+                EmailError::MessageError(format!("Invalid from email address: {}", e))
+            })?)
+            .to(email_to.parse().map_err(|e| {
+                EmailError::MessageError(format!("Invalid to email address: {}", e))
+            })?)
+            .subject(subject);
 
     // Add BCC if provided and not empty
     if let Some(bcc) = &args.bcc {
         if !bcc.is_empty() {
             email_builder = email_builder.bcc(bcc.parse().map_err(|e| {
-                EsimMailerError::EmailError(format!("Invalid BCC email address: {}", e))
+                EmailError::MessageError(format!("Invalid BCC email address: {}", e))
             })?);
         }
     }
@@ -130,16 +181,14 @@ pub fn send_email(args: &Args, token: String, image_path: &Path, count: usize) -
                 .singlepart(lettre::message::Attachment::new_inline(content_id).body(
                     image_data,
                     header::ContentType::parse("image/png").map_err(|e| {
-                        EsimMailerError::EmailError(format!("Invalid content type: {}", e))
+                        EmailError::MessageError(format!("Invalid content type: {}", e))
                     })?,
                 )),
         )
-        .map_err(|e| EsimMailerError::EmailError(format!("Failed to build email: {}", e)))?;
+        .map_err(|e| EmailError::MessageError(format!("Failed to build email: {}", e)))?;
 
     // Configure SMTP client with TLS
-    let provider: Provider = email_from
-        .parse()
-        .map_err(|e: ParseProviderError| EsimMailerError::UnsupportedProvider(e.to_string()))?;
+    let provider: Provider = email_from.parse()?;
     let mailer = configure_mailer(&provider, email_from, token)?;
 
     // Send the email
@@ -153,7 +202,7 @@ pub fn send_email(args: &Args, token: String, image_path: &Path, count: usize) -
             if let Some(source) = e.source() {
                 eprintln!("Error source: {:?}", source);
             }
-            Err(EsimMailerError::EmailError(format!(
+            Err(EmailError::SmtpError(format!(
                 "Could not send email: {}",
                 e
             )))
@@ -168,25 +217,20 @@ fn configure_mailer(
 ) -> Result<SmtpTransport> {
     match provider {
         Provider::Gmail => Ok(SmtpTransport::relay("smtp.gmail.com")
-            .map_err(|e| {
-                EsimMailerError::NetworkError(format!("Failed to connect to Gmail SMTP: {}", e))
-            })?
+            .map_err(|e| EmailError::SmtpError(format!("Failed to connect to Gmail SMTP: {}", e)))?
             .credentials(Credentials::new(email_address.to_string(), token))
             .authentication(vec![Mechanism::Xoauth2])
             .port(587)
             .tls(lettre::transport::smtp::client::Tls::Required(
                 lettre::transport::smtp::client::TlsParameters::new("smtp.gmail.com".to_string())
                     .map_err(|e| {
-                    EsimMailerError::NetworkError(format!(
-                        "Failed to configure TLS for Gmail: {}",
-                        e
-                    ))
+                    EmailError::SmtpError(format!("Failed to configure TLS for Gmail: {}", e))
                 })?,
             ))
             .build()),
         Provider::Outlook => Ok(SmtpTransport::relay("smtp-mail.outlook.com")
             .map_err(|e| {
-                EsimMailerError::NetworkError(format!("Failed to connect to Outlook SMTP: {}", e))
+                EmailError::SmtpError(format!("Failed to connect to Outlook SMTP: {}", e))
             })?
             .credentials(Credentials::new(email_address.to_string(), token))
             .authentication(vec![Mechanism::Xoauth2])
@@ -196,10 +240,7 @@ fn configure_mailer(
                     "smtp-mail.outlook.com".to_string(),
                 )
                 .map_err(|e| {
-                    EsimMailerError::NetworkError(format!(
-                        "Failed to configure TLS for Outlook: {}",
-                        e
-                    ))
+                    EmailError::SmtpError(format!("Failed to configure TLS for Outlook: {}", e))
                 })?,
             ))
             .build()),

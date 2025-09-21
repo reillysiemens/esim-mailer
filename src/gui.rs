@@ -5,13 +5,15 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use crate::email::{self, EmailTemplate};
+#[cfg(test)]
+use crate::email::EmailError;
+use crate::email::{self, EmailTemplate, Result as EmailResult};
 use crate::oauth::OAuthClient;
-use crate::{Args, Result, send_email};
+use crate::{Args, send_email};
 
 // Trait for email operations to allow mocking in tests
 pub trait EmailOperations: Send + Sync {
-    fn send_email(&self, args: &Args, token: String, path: &Path, count: usize) -> Result<()>;
+    fn send_email(&self, args: &Args, token: String, path: &Path, count: usize) -> EmailResult<()>;
     fn get_token(
         &self,
         provider: &email::Provider,
@@ -31,7 +33,7 @@ impl DefaultEmailOperations {
 }
 
 impl EmailOperations for DefaultEmailOperations {
-    fn send_email(&self, args: &Args, token: String, path: &Path, count: usize) -> Result<()> {
+    fn send_email(&self, args: &Args, token: String, path: &Path, count: usize) -> EmailResult<()> {
         send_email(args, token, path, count)
     }
 
@@ -358,11 +360,9 @@ mod tests {
             _token: String,
             _path: &Path,
             _count: usize,
-        ) -> Result<()> {
+        ) -> EmailResult<()> {
             if self.should_fail {
-                return Err(crate::error::EsimMailerError::EmailError(
-                    "Mock error".to_string(),
-                ));
+                return Err(EmailError::MessageError("Mock error".to_string()));
             }
             let mut count = self.send_count.lock().unwrap();
             *count += 1;
