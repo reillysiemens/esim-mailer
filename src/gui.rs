@@ -373,7 +373,7 @@ mod tests {
             _count: usize,
         ) -> Result<(), email::EmailError> {
             if self.should_fail {
-                return Err(EmailError::MessageError("Mock error".to_string()));
+                return Err(EmailError::Message("Mock error".to_string()));
             }
             let mut count = self.send_count.lock().unwrap();
             *count += 1;

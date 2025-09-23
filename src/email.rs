@@ -17,13 +17,13 @@ pub enum EmailError {
     UnsupportedProvider(#[from] ParseProviderError),
     /// Failed to parse or build email content
     #[error("Email message error: {0}")]
-    MessageError(String),
+    Message(String),
     /// Network/SMTP connection failed
     #[error("SMTP error: {0}")]
-    SmtpError(String),
+    Smtp(String),
     /// File system operations failed
     #[error("IO error: {0}")]
-    IoError(#[from] std::io::Error),
+    Io(#[from] std::io::Error),
 }
 
 /// An error which can be returned when parsing a provider from an email address.
@@ -124,10 +124,10 @@ pub fn send_email(
     let mut email_builder =
         Message::builder()
             .from(email_from.parse().map_err(|e| {
-                EmailError::MessageError(format!("Invalid from email address: {}", e))
+                EmailError::Message(format!("Invalid from email address: {}", e))
             })?)
             .to(email_to.parse().map_err(|e| {
-                EmailError::MessageError(format!("Invalid to email address: {}", e))
+                EmailError::Message(format!("Invalid to email address: {}", e))
             })?)
             .subject(subject);
 
@@ -137,7 +137,7 @@ pub fn send_email(
     {
         email_builder =
             email_builder.bcc(bcc.parse().map_err(|e| {
-                EmailError::MessageError(format!("Invalid BCC email address: {}", e))
+                EmailError::Message(format!("Invalid BCC email address: {}", e))
             })?);
     }
 
@@ -153,11 +153,11 @@ pub fn send_email(
                 .singlepart(lettre::message::Attachment::new_inline(content_id).body(
                     image_data,
                     header::ContentType::parse("image/png").map_err(|e| {
-                        EmailError::MessageError(format!("Invalid content type: {}", e))
+                        EmailError::Message(format!("Invalid content type: {}", e))
                     })?,
                 )),
         )
-        .map_err(|e| EmailError::MessageError(format!("Failed to build email: {}", e)))?;
+        .map_err(|e| EmailError::Message(format!("Failed to build email: {}", e)))?;
 
     // Configure SMTP client with TLS
     let provider: Provider = email_from.parse()?;
@@ -174,7 +174,7 @@ pub fn send_email(
             if let Some(source) = e.source() {
                 eprintln!("Error source: {:?}", source);
             }
-            Err(EmailError::SmtpError(format!(
+            Err(EmailError::Smtp(format!(
                 "Could not send email: {}",
                 e
             )))
@@ -189,20 +189,20 @@ fn configure_mailer(
 ) -> Result<SmtpTransport, EmailError> {
     match provider {
         Provider::Gmail => Ok(SmtpTransport::relay("smtp.gmail.com")
-            .map_err(|e| EmailError::SmtpError(format!("Failed to connect to Gmail SMTP: {}", e)))?
+            .map_err(|e| EmailError::Smtp(format!("Failed to connect to Gmail SMTP: {}", e)))?
             .credentials(Credentials::new(email_address.to_string(), token))
             .authentication(vec![Mechanism::Xoauth2])
             .port(587)
             .tls(lettre::transport::smtp::client::Tls::Required(
                 lettre::transport::smtp::client::TlsParameters::new("smtp.gmail.com".to_string())
                     .map_err(|e| {
-                    EmailError::SmtpError(format!("Failed to configure TLS for Gmail: {}", e))
+                    EmailError::Smtp(format!("Failed to configure TLS for Gmail: {}", e))
                 })?,
             ))
             .build()),
         Provider::Outlook => Ok(SmtpTransport::relay("smtp-mail.outlook.com")
             .map_err(|e| {
-                EmailError::SmtpError(format!("Failed to connect to Outlook SMTP: {}", e))
+                EmailError::Smtp(format!("Failed to connect to Outlook SMTP: {}", e))
             })?
             .credentials(Credentials::new(email_address.to_string(), token))
             .authentication(vec![Mechanism::Xoauth2])
@@ -212,7 +212,7 @@ fn configure_mailer(
                     "smtp-mail.outlook.com".to_string(),
                 )
                 .map_err(|e| {
-                    EmailError::SmtpError(format!("Failed to configure TLS for Outlook: {}", e))
+                    EmailError::Smtp(format!("Failed to configure TLS for Outlook: {}", e))
                 })?,
             ))
             .build()),
